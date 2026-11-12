@@ -9,6 +9,8 @@ import org.springframework.kafka.support.KafkaHeaders;
 import org.springframework.messaging.MessageChannel;
 import org.springframework.stereotype.Component;
 
+import java.util.UUID;
+
 import static com.example.examplespringintegration.Application.INSTANCE_ID;
 import static com.example.examplespringintegration.kafka.KafkaIntegrationConfiguration.KAFKA_OUTBOUND_CHANNEL;
 
@@ -34,6 +36,7 @@ public class ExampleMessageProducer implements ApplicationRunner {
                 kafkaOutboundChannel.send(MessageBuilder.withPayload(payload)
                         .setHeader(KafkaHeaders.TOPIC, topic)
                         .setHeader(KafkaHeaders.KEY, topic + "-" + i)
+                        .setHeader(KafkaConsumerSlotManager.TRACE_ID_HEADER, UUID.randomUUID().toString())
                         .build());
                 log.info("Sent topic={} payload={}", topic, payload);
             }

@@ -1,5 +1,6 @@
 package com.example.examplespringintegration.kafka;
 
+import com.example.examplespringintegration.EventHandler;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.SmartLifecycle;
 import org.springframework.integration.dsl.IntegrationFlow;
@@ -8,9 +9,13 @@ import org.springframework.integration.jdbc.lock.JdbcLockRegistry;
 import org.springframework.integration.kafka.dsl.Kafka;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.kafka.core.ConsumerFactory;
+import org.springframework.kafka.listener.ContainerProperties;
+import org.springframework.kafka.support.Acknowledgment;
 import org.springframework.kafka.support.KafkaHeaders;
+import org.springframework.messaging.Message;
 import org.springframework.stereotype.Component;
 
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.Arrays;
 import java.util.List;
@@ -34,6 +39,8 @@ import static com.example.examplespringintegration.Application.INSTANCE_ID;
 @Slf4j
 public class KafkaConsumerSlotManager implements SmartLifecycle {
 
+    public static final String TRACE_ID_HEADER = "TRACE_ID";
+
     private static final String FLOW_ID = "kafkaInboundFlow";
     private static final Duration CHECK_INTERVAL = Duration.ofSeconds(10);
 
@@ -41,6 +48,7 @@ public class KafkaConsumerSlotManager implements SmartLifecycle {
     private final JdbcLockRegistry lockRegistry;
     private final IntegrationFlowContext flowContext;
     private final ConsumerFactory<?, ?> consumerFactory;
+    private final EventHandler eventHandler;
 
     private ScheduledExecutorService executor;
     private volatile boolean running;
@@ -50,11 +58,13 @@ public class KafkaConsumerSlotManager implements SmartLifecycle {
     private Lock lock;
 
     public KafkaConsumerSlotManager(JdbcTemplate jdbcTemplate, JdbcLockRegistry lockRegistry,
-                                    IntegrationFlowContext flowContext, ConsumerFactory<?, ?> consumerFactory) {
+                                    IntegrationFlowContext flowContext, ConsumerFactory<?, ?> consumerFactory,
+                                    EventHandler eventHandler) {
         this.jdbcTemplate = jdbcTemplate;
         this.lockRegistry = lockRegistry;
         this.flowContext = flowContext;
         this.consumerFactory = consumerFactory;
+        this.eventHandler = eventHandler;
     }
 
     @Override
@@ -139,18 +149,41 @@ public class KafkaConsumerSlotManager implements SmartLifecycle {
         }
     }
 
-    /** Consumes the given topics and logs every record. */
+    /** Consumes the given topics and passes every record to the {@link EventHandler}. */
     private IntegrationFlow inboundFlow(String[] topics) {
         return IntegrationFlow
-                .from(Kafka.messageDrivenChannelAdapter(consumerFactory, topics))
-                .handle(message -> log.info("{} consumed topic={} partition={} offset={} key={} payload={}",
-                        INSTANCE_ID,
-                        message.getHeaders().get(KafkaHeaders.RECEIVED_TOPIC),
-                        message.getHeaders().get(KafkaHeaders.RECEIVED_PARTITION),
-                        message.getHeaders().get(KafkaHeaders.OFFSET),
-                        message.getHeaders().get(KafkaHeaders.RECEIVED_KEY),
-                        message.getPayload()))
+                .from(Kafka.messageDrivenChannelAdapter(consumerFactory, topics)
+                        .configureListenerContainer(container -> container.ackMode(ContainerProperties.AckMode.MANUAL)))
+                .handle(this::handle)
                 .get();
+    }
+
+    /**
+     * Runs on the Kafka consumer thread and waits for the handler's future. The record is acknowledged manually
+     * only after processing has finished; a failed future is rethrown without acknowledging and handled by the
+     * listener container (retry, then skip).
+     */
+    private void handle(Message<?> message) {
+        String traceId = traceId(message);
+        log.debug("{} - handling topic={} partition={} offset={} traceId={}", INSTANCE_ID,
+                message.getHeaders().get(KafkaHeaders.RECEIVED_TOPIC),
+                message.getHeaders().get(KafkaHeaders.RECEIVED_PARTITION),
+                message.getHeaders().get(KafkaHeaders.OFFSET),
+                traceId);
+        eventHandler.completed(String.valueOf(message.getPayload()), traceId).join();
+        var acknowledgment = message.getHeaders().get(KafkaHeaders.ACKNOWLEDGMENT, Acknowledgment.class);
+        if (acknowledgment != null) {
+            acknowledgment.acknowledge();
+        }
+    }
+
+    /** The optional TRACE_ID Kafka header; raw bytes when the producer did not send Spring's header type info. */
+    private static String traceId(Message<?> message) {
+        Object traceId = message.getHeaders().get(TRACE_ID_HEADER);
+        if (traceId instanceof byte[] bytes) {
+            return new String(bytes, StandardCharsets.UTF_8);
+        }
+        return traceId != null ? traceId.toString() : null;
     }
 
     private record Slot(int id, String topics) {
