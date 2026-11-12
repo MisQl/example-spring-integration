@@ -1,27 +1,25 @@
 package com.example.examplespringintegration.kafka;
 
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Qualifier;
-import org.springframework.integration.support.MessageBuilder;
-import org.springframework.kafka.support.KafkaHeaders;
-import org.springframework.messaging.MessageChannel;
+import org.apache.kafka.clients.producer.ProducerRecord;
+import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Component;
 
+import java.nio.charset.StandardCharsets;
 import java.util.UUID;
 
 import static com.example.examplespringintegration.Application.INSTANCE_ID;
-import static com.example.examplespringintegration.kafka.KafkaIntegrationConfiguration.KAFKA_OUTBOUND_CHANNEL;
 
+/** Sends the example messages to every configured topic; called by the ApplicationDispatcher on the leader. */
 @Component
 @Slf4j
 public class ExampleMessageProducer {
 
-    private final MessageChannel kafkaOutboundChannel;
+    private final KafkaTemplate<String, String> kafkaTemplate;
     private final KafkaProperties properties;
 
-    public ExampleMessageProducer(@Qualifier(KAFKA_OUTBOUND_CHANNEL) MessageChannel kafkaOutboundChannel,
-                                  KafkaProperties properties) {
-        this.kafkaOutboundChannel = kafkaOutboundChannel;
+    public ExampleMessageProducer(KafkaTemplate<String, String> kafkaTemplate, KafkaProperties properties) {
+        this.kafkaTemplate = kafkaTemplate;
         this.properties = properties;
     }
 
@@ -29,12 +27,15 @@ public class ExampleMessageProducer {
         for (String topic : properties.topics()) {
             for (int i = 1; i <= properties.messagesPerTopic(); i++) {
                 String payload = topic + " message " + i + " from " + INSTANCE_ID;
-                kafkaOutboundChannel.send(MessageBuilder.withPayload(payload)
-                        .setHeader(KafkaHeaders.TOPIC, topic)
-                        .setHeader(KafkaHeaders.KEY, topic + "-" + i)
-                        .setHeader(KafkaConsumerSlotManager.TRACE_ID_HEADER, UUID.randomUUID().toString())
-                        .build());
-                log.info(INSTANCE_ID + " | Sent topic={} payload={}", topic, payload);
+                var record = new ProducerRecord<>(topic, topic + "-" + i, payload);
+                record.headers().add(KafkaConsumerSlotManager.TRACE_ID_HEADER,
+                        UUID.randomUUID().toString().getBytes(StandardCharsets.UTF_8));
+                kafkaTemplate.send(record).whenComplete((result, failure) -> {
+                    if (failure != null) {
+                        log.error("Failed to send topic={} payload={}", topic, payload, failure);
+                    }
+                });
+                log.info("Sent topic={} payload={}", topic, payload);
             }
         }
     }

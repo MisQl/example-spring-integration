@@ -152,8 +152,7 @@ public class KafkaConsumerSlotManager implements SmartLifecycle {
     /** Consumes the given topics and passes every record to the {@link EventHandler}. */
     private IntegrationFlow inboundFlow(String[] topics) {
         return IntegrationFlow
-                .from(Kafka.messageDrivenChannelAdapter(consumerFactory, topics)
-                        .configureListenerContainer(container -> container.ackMode(ContainerProperties.AckMode.MANUAL)))
+                .from(Kafka.messageDrivenChannelAdapter(consumerFactory, topics).configureListenerContainer(container -> container.ackMode(ContainerProperties.AckMode.MANUAL)))
                 .handle(this::handle)
                 .get();
     }
