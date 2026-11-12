@@ -18,8 +18,6 @@ app:
       - example-orders
       - example-payments
       - example-notifications
-    # Topics consumed by this instance; defaults to all topics above.
-    # Set per instance, e.g. APP_KAFKA_CONSUME_TOPICS=example-orders,example-payments
-    # consume-topics:
+    # Which of these an instance consumes is decided by the slot it claims (table KAFKA_CONSUMER_SLOT).
     partitions: 15
     messages-per-topic: 10
