@@ -18,6 +18,7 @@ import static com.example.examplespringintegration.Application.INSTANCE_ID;
  * <p>
  * The listeners do not start with the application: the {@link KafkaConsumerSlotManager} starts the ones whose id
  * matches a topic of the slot this instance has claimed. The listener id must therefore equal the topic name.
+ * The number of consumer threads is configured per topic under {@code app.kafka.concurrency}.
  * {@code idIsGroup = false} keeps every listener in the shared consumer group (spring.kafka.consumer.group-id).
  */
 @Component
@@ -29,17 +30,17 @@ public class KafkaEventListener {
 
     private final EventHandler eventHandler;
 
-    @KafkaListener(id = "example-orders", topics = "example-orders", idIsGroup = false, autoStartup = "false")
+    @KafkaListener(id = "example-orders", topics = "example-orders", idIsGroup = false, autoStartup = "false", concurrency = "${app.kafka.concurrency.example-orders}")
     public void onOrder(ConsumerRecord<String, String> record, Acknowledgment acknowledgment) {
         handle(record, acknowledgment);
     }
 
-    @KafkaListener(id = "example-payments", topics = "example-payments", idIsGroup = false, autoStartup = "false")
+    @KafkaListener(id = "example-payments", topics = "example-payments", idIsGroup = false, autoStartup = "false", concurrency = "${app.kafka.concurrency.example-payments}")
     public void onPayment(ConsumerRecord<String, String> record, Acknowledgment acknowledgment) {
         handle(record, acknowledgment);
     }
 
-    @KafkaListener(id = "example-notifications", topics = "example-notifications", idIsGroup = false, autoStartup = "false")
+    @KafkaListener(id = "example-notifications", topics = "example-notifications", idIsGroup = false, autoStartup = "false", concurrency = "${app.kafka.concurrency.example-notifications}")
     public void onNotification(ConsumerRecord<String, String> record, Acknowledgment acknowledgment) {
         handle(record, acknowledgment);
     }

@@ -22,4 +22,9 @@ app:
       - example-notifications
     # Which of these an instance consumes is decided by the slot it claims (table KAFKA_CONSUMER_SLOT).
     partitions: 15
+    # Consumer threads per topic on each instance that consumes it (used by the @KafkaListener of that topic).
+    concurrency:
+      example-orders: 4
+      example-payments: 4
+      example-notifications: 4
     messages-per-topic: 10
