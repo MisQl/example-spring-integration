@@ -1,21 +1,13 @@
 package com.example.examplespringintegration.kafka;
 
-import com.example.examplespringintegration.EventHandler;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.SmartLifecycle;
-import org.springframework.integration.dsl.IntegrationFlow;
-import org.springframework.integration.dsl.context.IntegrationFlowContext;
 import org.springframework.integration.jdbc.lock.JdbcLockRegistry;
-import org.springframework.integration.kafka.dsl.Kafka;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.kafka.core.ConsumerFactory;
-import org.springframework.kafka.listener.ContainerProperties;
-import org.springframework.kafka.support.Acknowledgment;
-import org.springframework.kafka.support.KafkaHeaders;
-import org.springframework.messaging.Message;
+import org.springframework.kafka.config.KafkaListenerEndpointRegistry;
+import org.springframework.kafka.listener.MessageListenerContainer;
 import org.springframework.stereotype.Component;
 
-import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.Arrays;
 import java.util.List;
@@ -29,8 +21,8 @@ import static com.example.examplespringintegration.Application.INSTANCE_ID;
 /**
  * Decides which Kafka topics this instance consumes by claiming a slot from the KAFKA_CONSUMER_SLOT table.
  * <p>
- * A slot is claimed by holding the distributed lock "kafka-consumer-slot-N". While the lock is held the inbound
- * flow for the slot's topics is registered; the lock is renewed periodically. An instance that finds no free slot
+ * A slot is claimed by holding the distributed lock "kafka-consumer-slot-N". While the lock is held the
+ * {@code @KafkaListener}s of the slot's topics are running; the lock is renewed periodically. An instance that finds no free slot
  * stays on standby and retries, so it takes over when another instance stops or dies (its lock expires).
  * <p>
  * JDBC locks are bound to the thread that acquired them, so claim, renew and release all run on one thread.
@@ -39,16 +31,11 @@ import static com.example.examplespringintegration.Application.INSTANCE_ID;
 @Slf4j
 public class KafkaConsumerSlotManager implements SmartLifecycle {
 
-    public static final String TRACE_ID_HEADER = "TRACE_ID";
-
-    private static final String FLOW_ID = "kafkaInboundFlow";
     private static final Duration CHECK_INTERVAL = Duration.ofSeconds(10);
 
     private final JdbcTemplate jdbcTemplate;
     private final JdbcLockRegistry lockRegistry;
-    private final IntegrationFlowContext flowContext;
-    private final ConsumerFactory<?, ?> consumerFactory;
-    private final EventHandler eventHandler;
+    private final KafkaListenerEndpointRegistry listenerRegistry;
 
     private ScheduledExecutorService executor;
     private volatile boolean running;
@@ -56,15 +43,13 @@ public class KafkaConsumerSlotManager implements SmartLifecycle {
     // accessed only from the executor thread
     private String lockKey;
     private Lock lock;
+    private List<String> topics = List.of();
 
     public KafkaConsumerSlotManager(JdbcTemplate jdbcTemplate, JdbcLockRegistry lockRegistry,
-                                    IntegrationFlowContext flowContext, ConsumerFactory<?, ?> consumerFactory,
-                                    EventHandler eventHandler) {
+                                    KafkaListenerEndpointRegistry listenerRegistry) {
         this.jdbcTemplate = jdbcTemplate;
         this.lockRegistry = lockRegistry;
-        this.flowContext = flowContext;
-        this.consumerFactory = consumerFactory;
-        this.eventHandler = eventHandler;
+        this.listenerRegistry = listenerRegistry;
     }
 
     @Override
@@ -112,8 +97,8 @@ public class KafkaConsumerSlotManager implements SmartLifecycle {
             if (candidate.tryLock()) {
                 lockKey = key;
                 lock = candidate;
-                String[] topics = Arrays.stream(slot.topics().split(",")).map(String::trim).toArray(String[]::new);
-                flowContext.registration(inboundFlow(topics)).id(FLOW_ID).register();
+                topics = Arrays.stream(slot.topics().split(",")).map(String::trim).toList();
+                startListeners();
                 log.info("{} | Assigned topics to consume: {}", INSTANCE_ID, String.join(", ", topics));
                 return;
             }
@@ -127,7 +112,7 @@ public class KafkaConsumerSlotManager implements SmartLifecycle {
         } catch (Exception e) {
             // The lock expired and may now belong to another instance: stop consuming and go back to claiming.
             log.warn("{} - lost {}, stopping kafka consumption", INSTANCE_ID, lockKey, e);
-            flowContext.remove(FLOW_ID);
+            stopListeners();
             lock = null;
             lockKey = null;
         }
@@ -138,7 +123,7 @@ public class KafkaConsumerSlotManager implements SmartLifecycle {
             return;
         }
         try {
-            flowContext.remove(FLOW_ID);
+            stopListeners();
             lock.unlock();
             log.info("{} - released {}", INSTANCE_ID, lockKey);
         } catch (Exception e) {
@@ -149,40 +134,26 @@ public class KafkaConsumerSlotManager implements SmartLifecycle {
         }
     }
 
-    /** Consumes the given topics and passes every record to the {@link EventHandler}. */
-    private IntegrationFlow inboundFlow(String[] topics) {
-        return IntegrationFlow
-                .from(Kafka.messageDrivenChannelAdapter(consumerFactory, topics).configureListenerContainer(container -> container.ackMode(ContainerProperties.AckMode.MANUAL)))
-                .handle(this::handle)
-                .get();
-    }
-
-    /**
-     * Runs on the Kafka consumer thread and waits for the handler's future. The record is acknowledged manually
-     * only after processing has finished; a failed future is rethrown without acknowledging and handled by the
-     * listener container (retry, then skip).
-     */
-    private void handle(Message<?> message) {
-        String traceId = traceId(message);
-        log.debug("{} - handling topic={} partition={} offset={} traceId={}", INSTANCE_ID,
-                message.getHeaders().get(KafkaHeaders.RECEIVED_TOPIC),
-                message.getHeaders().get(KafkaHeaders.RECEIVED_PARTITION),
-                message.getHeaders().get(KafkaHeaders.OFFSET),
-                traceId);
-        eventHandler.completed(String.valueOf(message.getPayload()), traceId).join();
-        var acknowledgment = message.getHeaders().get(KafkaHeaders.ACKNOWLEDGMENT, Acknowledgment.class);
-        if (acknowledgment != null) {
-            acknowledgment.acknowledge();
+    /** Starts the {@code @KafkaListener} containers of the given topics (listener id = topic name). */
+    private void startListeners() {
+        for (String topic : topics) {
+            MessageListenerContainer container = listenerRegistry.getListenerContainer(topic);
+            if (container == null) {
+                log.error("{} - no @KafkaListener with id '{}', topic is not consumed", INSTANCE_ID, topic);
+            } else {
+                container.start();
+            }
         }
     }
 
-    /** The optional TRACE_ID Kafka header; raw bytes when the producer did not send Spring's header type info. */
-    private static String traceId(Message<?> message) {
-        Object traceId = message.getHeaders().get(TRACE_ID_HEADER);
-        if (traceId instanceof byte[] bytes) {
-            return new String(bytes, StandardCharsets.UTF_8);
+    private void stopListeners() {
+        for (String topic : topics) {
+            MessageListenerContainer container = listenerRegistry.getListenerContainer(topic);
+            if (container != null) {
+                container.stop();
+            }
         }
-        return traceId != null ? traceId.toString() : null;
+        topics = List.of();
     }
 
     private record Slot(int id, String topics) {

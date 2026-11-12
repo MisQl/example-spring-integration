@@ -28,7 +28,7 @@ public class ExampleMessageProducer {
             for (int i = 1; i <= properties.messagesPerTopic(); i++) {
                 String payload = topic + " message " + i + " from " + INSTANCE_ID;
                 var record = new ProducerRecord<>(topic, topic + "-" + i, payload);
-                record.headers().add(KafkaConsumerSlotManager.TRACE_ID_HEADER,
+                record.headers().add(KafkaEventListener.TRACE_ID_HEADER,
                         UUID.randomUUID().toString().getBytes(StandardCharsets.UTF_8));
                 kafkaTemplate.send(record).whenComplete((result, failure) -> {
                     if (failure != null) {
