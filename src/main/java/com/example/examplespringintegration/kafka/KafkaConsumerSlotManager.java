@@ -114,7 +114,7 @@ public class KafkaConsumerSlotManager implements SmartLifecycle {
                 lock = candidate;
                 String[] topics = Arrays.stream(slot.topics().split(",")).map(String::trim).toArray(String[]::new);
                 flowContext.registration(inboundFlow(topics)).id(FLOW_ID).register();
-                log.info("{} - claimed kafka consumer slot {}, consuming {}", INSTANCE_ID, slot.id(), List.of(topics));
+                log.info("{} | Assigned topics to consume: {}", INSTANCE_ID, String.join(", ", topics));
                 return;
             }
         }
