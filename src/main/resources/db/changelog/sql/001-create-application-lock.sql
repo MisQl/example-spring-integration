@@ -1,0 +1,12 @@
+--liquibase formatted sql
+
+--changeset michal.paukszto:001-create-application-lock
+CREATE TABLE APPLICATION_LOCK (
+    LOCK_KEY      CHAR(36)     NOT NULL,
+    REGION        VARCHAR(100) NOT NULL,
+    CLIENT_ID     CHAR(36),
+    CREATED_DATE  TIMESTAMP    NOT NULL,
+    EXPIRED_AFTER TIMESTAMP    NOT NULL,
+    CONSTRAINT APPLICATION_LOCK_PK PRIMARY KEY (LOCK_KEY, REGION)
+);
+--rollback DROP TABLE APPLICATION_LOCK;
