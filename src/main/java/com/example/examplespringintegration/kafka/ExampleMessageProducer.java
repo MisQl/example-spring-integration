@@ -26,9 +26,9 @@ public class ExampleMessageProducer {
     }
 
     public void sendExampleMessages() {
-        for (String topic : properties.topics()) {
-            for (int i = 1; i <= properties.messagesPerTopic(); i++) {
-                String payload = topic + " message " + i + " from " + INSTANCE_ID;
+        for (var topic : properties.topics()) {
+            for (var i = 1; i <= properties.messagesPerTopic(); i++) {
+                var payload = topic + " message " + i + " from " + INSTANCE_ID;
                 var record = new ProducerRecord<>(topic, topic + "-" + i, payload);
                 record.headers().add(KafkaEventListener.TRACE_ID_HEADER,
                         UUID.randomUUID().toString().getBytes(StandardCharsets.UTF_8));

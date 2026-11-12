@@ -4,7 +4,6 @@ import com.example.examplespringintegration.EventHandler;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
-import org.apache.kafka.common.header.Header;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.kafka.support.Acknowledgment;
 import org.springframework.stereotype.Component;
@@ -51,7 +50,7 @@ public class KafkaEventListener {
      * listener container (retry, then skip).
      */
     private void handle(ConsumerRecord<String, String> record, Acknowledgment acknowledgment) {
-        String traceId = traceId(record);
+        var traceId = traceId(record);
         log.debug("{} - handling topic={} partition={} offset={} traceId={}", INSTANCE_ID, record.topic(), record.partition(), record.offset(), traceId);
         eventHandler.completed(record.value(), traceId).join();
         acknowledgment.acknowledge();
@@ -59,7 +58,7 @@ public class KafkaEventListener {
 
     /** The optional TRACE_ID Kafka header, or null when the record has none. */
     private static String traceId(ConsumerRecord<String, String> record) {
-        Header header = record.headers().lastHeader(TRACE_ID_HEADER);
+        var header = record.headers().lastHeader(TRACE_ID_HEADER);
         return header != null && header.value() != null ? new String(header.value(), StandardCharsets.UTF_8) : null;
     }
 }

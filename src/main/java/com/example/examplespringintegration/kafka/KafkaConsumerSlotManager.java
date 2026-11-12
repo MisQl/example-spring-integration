@@ -5,7 +5,6 @@ import org.springframework.context.SmartLifecycle;
 import org.springframework.integration.jdbc.lock.JdbcLockRegistry;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.kafka.config.KafkaListenerEndpointRegistry;
-import org.springframework.kafka.listener.MessageListenerContainer;
 import org.springframework.stereotype.Component;
 
 import java.time.Duration;
@@ -89,11 +88,10 @@ public class KafkaConsumerSlotManager implements SmartLifecycle {
     }
 
     private void claim() {
-        List<Slot> slots = jdbcTemplate.query("SELECT SLOT, TOPICS FROM KAFKA_CONSUMER_SLOT ORDER BY SLOT",
-                (rs, rowNum) -> new Slot(rs.getInt("SLOT"), rs.getString("TOPICS")));
-        for (Slot slot : slots) {
-            String key = "kafka-consumer-slot-" + slot.id();
-            Lock candidate = lockRegistry.obtain(key);
+        var slots = jdbcTemplate.query("SELECT SLOT, TOPICS FROM KAFKA_CONSUMER_SLOT ORDER BY SLOT", (rs, rowNum) -> new Slot(rs.getInt("SLOT"), rs.getString("TOPICS")));
+        for (var slot : slots) {
+            var key = "kafka-consumer-slot-" + slot.id();
+            var candidate = lockRegistry.obtain(key);
             if (candidate.tryLock()) {
                 lockKey = key;
                 lock = candidate;
@@ -136,8 +134,8 @@ public class KafkaConsumerSlotManager implements SmartLifecycle {
 
     /** Starts the {@code @KafkaListener} containers of the given topics (listener id = topic name). */
     private void startListeners() {
-        for (String topic : topics) {
-            MessageListenerContainer container = listenerRegistry.getListenerContainer(topic);
+        for (var topic : topics) {
+            var container = listenerRegistry.getListenerContainer(topic);
             if (container == null) {
                 log.error("{} - no @KafkaListener with id '{}', topic is not consumed", INSTANCE_ID, topic);
             } else {
@@ -147,8 +145,8 @@ public class KafkaConsumerSlotManager implements SmartLifecycle {
     }
 
     private void stopListeners() {
-        for (String topic : topics) {
-            MessageListenerContainer container = listenerRegistry.getListenerContainer(topic);
+        for (var topic : topics) {
+            var container = listenerRegistry.getListenerContainer(topic);
             if (container != null) {
                 container.stop();
             }
