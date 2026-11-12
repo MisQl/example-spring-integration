@@ -3,10 +3,12 @@ package com.example.examplespringintegration.kafka;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.kafka.support.SendResult;
 import org.springframework.stereotype.Component;
 
 import java.nio.charset.StandardCharsets;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 
 import static com.example.examplespringintegration.Application.INSTANCE_ID;
 
@@ -38,5 +40,9 @@ public class ExampleMessageProducer {
                 log.info("Sent topic={} payload={}", topic, payload);
             }
         }
+    }
+
+    public CompletableFuture<SendResult<String, String>> sendAsyncMessage(String topic, String message) {
+        return kafkaTemplate.send(topic, message);
     }
 }
