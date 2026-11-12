@@ -30,3 +30,7 @@ app:
       example-payments: 4
       example-notifications: 4
     messages-per-topic: 10
+    # How the listener waits for the handler's future:
+    #   join          - block the consumer thread until it completes, then acknowledge (ordered, container retries)
+    #   when-complete - acknowledge from a callback when it completes; pair with spring.kafka.listener.async-acks: true
+    processing-mode: JOIN
