@@ -18,11 +18,17 @@ import java.util.concurrent.locks.Lock;
 import static com.example.examplespringintegration.Application.INSTANCE_ID;
 
 /**
- * Decides which Kafka topics this instance consumes by claiming an active slot from the KAFKA_CONSUMER_SLOT table.
+ * Decides which Kafka topics this instance consumes by claiming an active slot from the KAFKA_CONSUMER_CONFIGURATION table.
  * <p>
  * A slot is claimed by holding the distributed lock "kafka-consumer-slot-N". While the lock is held the
  * {@code @KafkaListener}s of the slot's topics are running; the lock is renewed periodically. An instance that finds no free slot
  * stays on standby and retries, so it takes over when another instance stops or dies (its lock expires).
+ * Only slots with ACTIVE = true are claimed; an instance whose slot is deactivated releases it at the next check
+ * and claims another active slot if one is free.
+ * <p>
+ * KAFKA_CONSUMER_CONFIGURATION.INSTANCE_ID is optional configuration that this class only reads: a slot with an INSTANCE_ID
+ * is reserved for the instance with that id, a slot without one can be claimed by any instance. An instance tries
+ * the slots reserved for it first. If its slot is reserved for another instance later, it releases the slot.
  * Only slots with ACTIVE = true are claimed; an instance whose slot is deactivated releases it at the next check
  * and claims another active slot if one is free.
  * <p>
@@ -91,7 +97,11 @@ public class KafkaConsumerSlotManager implements SmartLifecycle {
     }
 
     private void claim() {
-        var slots = jdbcTemplate.query("SELECT SLOT, TOPICS FROM KAFKA_CONSUMER_SLOT WHERE ACTIVE ORDER BY SLOT", (rs, rowNum) -> new Slot(rs.getInt("SLOT"), rs.getString("TOPICS")));
+        var slots = jdbcTemplate.query("""
+                SELECT SLOT, TOPICS FROM KAFKA_CONSUMER_CONFIGURATION
+                WHERE ACTIVE AND (INSTANCE_ID IS NULL OR INSTANCE_ID = ?)
+                ORDER BY CASE WHEN INSTANCE_ID IS NULL THEN 1 ELSE 0 END, SLOT
+                """, (rs, rowNum) -> new Slot(rs.getInt("SLOT"), rs.getString("TOPICS")), INSTANCE_ID);
         for (var slot : slots) {
             var key = "kafka-consumer-slot-" + slot.id();
             var candidate = lockRegistry.obtain(key);
@@ -105,13 +115,13 @@ public class KafkaConsumerSlotManager implements SmartLifecycle {
                 return;
             }
         }
-        log.info("{} - no free kafka consumer slot ({} active), on standby", INSTANCE_ID, slots.size());
+        log.info("{} - no free kafka consumer slot ({} available to this instance), on standby", INSTANCE_ID, slots.size());
     }
 
     private void renew() {
-        if (!isActive(slotId)) {
-            // The slot was deactivated (or deleted): give it up and look for another active one right away.
-            log.info("{} - kafka consumer slot {} is no longer active", INSTANCE_ID, slotId);
+        if (!isAvailable(slotId)) {
+            // The slot was deactivated, deleted or reserved for another instance: give it up and look for another one.
+            log.info("{} - kafka consumer slot {} is no longer available to this instance", INSTANCE_ID, slotId);
             release();
             claim();
             return;
@@ -127,9 +137,13 @@ public class KafkaConsumerSlotManager implements SmartLifecycle {
         }
     }
 
-    private boolean isActive(int slot) {
-        var active = jdbcTemplate.queryForList("SELECT ACTIVE FROM KAFKA_CONSUMER_SLOT WHERE SLOT = ?", Boolean.class, slot);
-        return !active.isEmpty() && Boolean.TRUE.equals(active.getFirst());
+    /** Whether the slot is still active and not reserved for another instance. */
+    private boolean isAvailable(int slot) {
+        var count = jdbcTemplate.queryForObject("""
+                SELECT COUNT(*) FROM KAFKA_CONSUMER_CONFIGURATION
+                WHERE SLOT = ? AND ACTIVE AND (INSTANCE_ID IS NULL OR INSTANCE_ID = ?)
+                """, Integer.class, slot, INSTANCE_ID);
+        return count != null && count > 0;
     }
 
     private void release() {
