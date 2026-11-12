@@ -1,6 +1,7 @@
 package com.example.examplespringintegration.kafka;
 
 import lombok.extern.slf4j.Slf4j;
+import static com.example.examplespringintegration.Application.INSTANCE_ID;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -25,7 +26,7 @@ public class KafkaIntegrationConfiguration {
     @Bean
     KafkaAdmin.NewTopics exampleTopics(KafkaProperties properties) {
         return new KafkaAdmin.NewTopics(properties.topics().stream()
-                .map(topic -> TopicBuilder.name(topic).partitions(1).replicas(1).build())
+                .map(topic -> TopicBuilder.name(topic).partitions(properties.partitions()).replicas(1).build())
                 .toArray(org.apache.kafka.clients.admin.NewTopic[]::new));
     }
 
@@ -42,12 +43,13 @@ public class KafkaIntegrationConfiguration {
                 .get();
     }
 
-    /** Consumes all example topics and logs every record. */
+    /** Consumes the topics configured for this instance (app.kafka.consume-topics) and logs every record. */
     @Bean
     IntegrationFlow kafkaInboundFlow(ConsumerFactory<?, ?> consumerFactory, KafkaProperties properties) {
         return IntegrationFlow
-                .from(Kafka.messageDrivenChannelAdapter(consumerFactory, properties.topics().toArray(String[]::new)))
-                .handle(message -> log.info("Consumed topic={} partition={} offset={} key={} payload={}",
+                .from(Kafka.messageDrivenChannelAdapter(consumerFactory, properties.consumeTopics().toArray(String[]::new)))
+                .handle(message -> log.info("{} consumed topic={} partition={} offset={} key={} payload={}",
+                        INSTANCE_ID,
                         message.getHeaders().get(KafkaHeaders.RECEIVED_TOPIC),
                         message.getHeaders().get(KafkaHeaders.RECEIVED_PARTITION),
                         message.getHeaders().get(KafkaHeaders.OFFSET),
