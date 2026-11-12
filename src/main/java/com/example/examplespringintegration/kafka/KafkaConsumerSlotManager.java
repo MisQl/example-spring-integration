@@ -18,11 +18,13 @@ import java.util.concurrent.locks.Lock;
 import static com.example.examplespringintegration.Application.INSTANCE_ID;
 
 /**
- * Decides which Kafka topics this instance consumes by claiming a slot from the KAFKA_CONSUMER_SLOT table.
+ * Decides which Kafka topics this instance consumes by claiming an active slot from the KAFKA_CONSUMER_SLOT table.
  * <p>
  * A slot is claimed by holding the distributed lock "kafka-consumer-slot-N". While the lock is held the
  * {@code @KafkaListener}s of the slot's topics are running; the lock is renewed periodically. An instance that finds no free slot
  * stays on standby and retries, so it takes over when another instance stops or dies (its lock expires).
+ * Only slots with ACTIVE = true are claimed; an instance whose slot is deactivated releases it at the next check
+ * and claims another active slot if one is free.
  * <p>
  * JDBC locks are bound to the thread that acquired them, so claim, renew and release all run on one thread.
  */
@@ -40,6 +42,7 @@ public class KafkaConsumerSlotManager implements SmartLifecycle {
     private volatile boolean running;
 
     // accessed only from the executor thread
+    private int slotId;
     private String lockKey;
     private Lock lock;
     private List<String> topics = List.of();
@@ -88,11 +91,12 @@ public class KafkaConsumerSlotManager implements SmartLifecycle {
     }
 
     private void claim() {
-        var slots = jdbcTemplate.query("SELECT SLOT, TOPICS FROM KAFKA_CONSUMER_SLOT ORDER BY SLOT", (rs, rowNum) -> new Slot(rs.getInt("SLOT"), rs.getString("TOPICS")));
+        var slots = jdbcTemplate.query("SELECT SLOT, TOPICS FROM KAFKA_CONSUMER_SLOT WHERE ACTIVE ORDER BY SLOT", (rs, rowNum) -> new Slot(rs.getInt("SLOT"), rs.getString("TOPICS")));
         for (var slot : slots) {
             var key = "kafka-consumer-slot-" + slot.id();
             var candidate = lockRegistry.obtain(key);
             if (candidate.tryLock()) {
+                slotId = slot.id();
                 lockKey = key;
                 lock = candidate;
                 topics = Arrays.stream(slot.topics().split(",")).map(String::trim).toList();
@@ -101,10 +105,17 @@ public class KafkaConsumerSlotManager implements SmartLifecycle {
                 return;
             }
         }
-        log.info("{} - no free kafka consumer slot ({} defined), on standby", INSTANCE_ID, slots.size());
+        log.info("{} - no free kafka consumer slot ({} active), on standby", INSTANCE_ID, slots.size());
     }
 
     private void renew() {
+        if (!isActive(slotId)) {
+            // The slot was deactivated (or deleted): give it up and look for another active one right away.
+            log.info("{} - kafka consumer slot {} is no longer active", INSTANCE_ID, slotId);
+            release();
+            claim();
+            return;
+        }
         try {
             lockRegistry.renewLock(lockKey);
         } catch (Exception e) {
@@ -114,6 +125,11 @@ public class KafkaConsumerSlotManager implements SmartLifecycle {
             lock = null;
             lockKey = null;
         }
+    }
+
+    private boolean isActive(int slot) {
+        var active = jdbcTemplate.queryForList("SELECT ACTIVE FROM KAFKA_CONSUMER_SLOT WHERE SLOT = ?", Boolean.class, slot);
+        return !active.isEmpty() && Boolean.TRUE.equals(active.getFirst());
     }
 
     private void release() {

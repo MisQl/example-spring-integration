@@ -30,8 +30,7 @@ public class ExampleMessageProducer {
             for (var i = 1; i <= properties.messagesPerTopic(); i++) {
                 var payload = topic + " message " + i + " from " + INSTANCE_ID;
                 var record = new ProducerRecord<>(topic, topic + "-" + i, payload);
-                record.headers().add(KafkaEventListener.TRACE_ID_HEADER,
-                        UUID.randomUUID().toString().getBytes(StandardCharsets.UTF_8));
+                record.headers().add(KafkaEventListener.TRACE_ID_HEADER, UUID.randomUUID().toString().getBytes(StandardCharsets.UTF_8));
                 kafkaTemplate.send(record).whenComplete((result, failure) -> {
                     if (failure != null) {
                         log.error("Failed to send topic={} payload={}", topic, payload, failure);
